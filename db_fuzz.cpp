@@ -110,8 +110,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     switch (fuzz_op) {
     case FuzzOp::kPut: {
+            
       std::string key = fuzzed_data.ConsumeRandomLengthString();
       std::string value = fuzzed_data.ConsumeRandomLengthString();
+      if (fuzzed_data.ConsumeBool()) {
+          value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024));
+      }
       db->Put(leveldb::WriteOptions(), key, value);
       reference_map[key] = value;
       break;
