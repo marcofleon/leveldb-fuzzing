@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <random>
 
 #include "leveldb/db.h"
 #include "leveldb/iterator.h"
@@ -16,29 +17,35 @@ namespace {
 // Deletes the database directory when going out of scope.
 class AutoDbDeleter {
  public:
-  static constexpr char kDbPath[] = "/tmp/testdb";
-
-  AutoDbDeleter() = default;
+  AutoDbDeleter() {
+    // Create a random directory name
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<uint64_t> dis;
+    
+    db_path_ = std::string("/tmp/testdb_") + std::to_string(dis(gen));
+  }
 
   AutoDbDeleter(const AutoDbDeleter&) = delete;
   AutoDbDeleter& operator=(const AutoDbDeleter&) = delete;
 
   ~AutoDbDeleter() {
-    std::filesystem::remove_all(kDbPath);
+    std::filesystem::remove_all(db_path_);
   }
+
+  const std::string& path() const { return db_path_; }
+
+ private:
+  std::string db_path_;
 };
 
-// static
-constexpr char AutoDbDeleter::kDbPath[];
-
 // Returns nullptr (a falsey unique_ptr) if opening fails.
-std::unique_ptr<leveldb::DB> OpenDB() {
+std::unique_ptr<leveldb::DB> OpenDB(const std::string& path) {
   leveldb::Options options;
   options.create_if_missing = true;
 
   leveldb::DB* db_ptr;
-  leveldb::Status status =
-      leveldb::DB::Open(options, AutoDbDeleter::kDbPath, &db_ptr);
+  leveldb::Status status = leveldb::DB::Open(options, path, &db_ptr);
   if (!status.ok())
     return nullptr;
 
@@ -66,7 +73,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   // Must occur before `db` so the deletion doesn't happen while the DB is open.
   AutoDbDeleter db_deleter;
 
-  std::unique_ptr<leveldb::DB> db = OpenDB();
+  std::unique_ptr<leveldb::DB> db = OpenDB(db_deleter.path());
   if (!db.get())
     return 0;
 
@@ -112,12 +119,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       db->ReleaseSnapshot(snapshot_options.snapshot);
     }
     case FuzzOp::kReopenDb: {
-      // The database must be closed before attempting to reopen it. Otherwise,
-      // the open will fail due to exclusive locking.
       db.reset();
-      db = OpenDB();
+      db = OpenDB(db_deleter.path());
       if (!db)
-        return 0;  // Reopening the database failed.
+        return 0;
       break;
     }
     case FuzzOp::kCompactRange: {
