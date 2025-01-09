@@ -105,7 +105,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   std::unordered_map<std::string, std::string> reference_map;
 
   FuzzedDataProvider fuzzed_data(data, size);
-  while (fuzzed_data.remaining_bytes() != 0) {
+  int counter = 100;
+  while (fuzzed_data.remaining_bytes() != 0 && counter-- > 0) {
     FuzzOp fuzz_op = fuzzed_data.ConsumeEnum<FuzzOp>();
 
     switch (fuzz_op) {
@@ -114,7 +115,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       std::string key = fuzzed_data.ConsumeRandomLengthString();
       std::string value = fuzzed_data.ConsumeRandomLengthString();
       if (fuzzed_data.ConsumeBool()) {
-          value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024));
+          value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*20));
       }
       db->Put(leveldb::WriteOptions(), key, value);
       reference_map[key] = value;
