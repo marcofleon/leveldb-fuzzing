@@ -4,6 +4,8 @@
 #include <memory>
 #include <string>
 #include <random>
+#include <unordered_map>
+#include <cassert>
 
 #include "leveldb/db.h"
 #include "leveldb/iterator.h"
@@ -67,17 +69,41 @@ enum class FuzzOp {
   kMaxValue = kCompactRange,
 };
 
+// Helper function to verify DB contents match the map
+bool VerifyContents(leveldb::DB* db, const std::unordered_map<std::string, std::string>& reference_map) {
+  // First check that every key-value in the map exists in leveldb
+  for (const auto& [key, expected_value] : reference_map) {
+    std::string actual_value;
+    auto status = db->Get(leveldb::ReadOptions(), key, &actual_value);
+    if (!status.ok() || actual_value != expected_value) {
+      return false;
+    }
+  }
+
+  // Then verify no extra keys exist in leveldb
+  std::unique_ptr<leveldb::Iterator> it(db->NewIterator(leveldb::ReadOptions()));
+  for (it->SeekToFirst(); it->Valid(); it->Next()) {
+    auto map_it = reference_map.find(it->key().ToString());
+    if (map_it == reference_map.end() || map_it->second != it->value().ToString()) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 }  // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-  // Must occur before `db` so the deletion doesn't happen while the DB is open.
   AutoDbDeleter db_deleter;
 
   std::unique_ptr<leveldb::DB> db = OpenDB(db_deleter.path());
   if (!db.get())
     return 0;
 
-  // Perform a sequence of operations on the database.
+  // Create reference map to track expected contents
+  std::unordered_map<std::string, std::string> reference_map;
+
   FuzzedDataProvider fuzzed_data(data, size);
   while (fuzzed_data.remaining_bytes() != 0) {
     FuzzOp fuzz_op = fuzzed_data.ConsumeEnum<FuzzOp>();
@@ -87,17 +113,19 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       std::string key = fuzzed_data.ConsumeRandomLengthString();
       std::string value = fuzzed_data.ConsumeRandomLengthString();
       db->Put(leveldb::WriteOptions(), key, value);
+      reference_map[key] = value;
+      break;
+    }
+    case FuzzOp::kDelete: {
+      std::string key = fuzzed_data.ConsumeRandomLengthString();
+      db->Delete(leveldb::WriteOptions(), key);
+      reference_map.erase(key);
       break;
     }
     case FuzzOp::kGet: {
       std::string key = fuzzed_data.ConsumeRandomLengthString();
       std::string value;
       db->Get(leveldb::ReadOptions(), key, &value);
-      break;
-    }
-    case FuzzOp::kDelete: {
-      std::string key = fuzzed_data.ConsumeRandomLengthString();
-      db->Delete(leveldb::WriteOptions(), key);
       break;
     }
     case FuzzOp::kGetProperty: {
@@ -119,10 +147,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       db->ReleaseSnapshot(snapshot_options.snapshot);
     }
     case FuzzOp::kReopenDb: {
+     
+      
       db.reset();
       db = OpenDB(db_deleter.path());
       if (!db)
         return 0;
+      
+      
       break;
     }
     case FuzzOp::kCompactRange: {
@@ -135,6 +167,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     }
     }
   }
+
+  // Verify final contents match
+  assert(VerifyContents(db.get(), reference_map));
 
   return 0;
 }
