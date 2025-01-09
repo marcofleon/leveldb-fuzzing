@@ -11,6 +11,8 @@
 #include "leveldb/iterator.h"
 #include "leveldb/options.h"
 #include "leveldb/status.h"
+#include "leveldb/cache.h"
+#include "leveldb/filter_policy.h"
 
 #include "FuzzedDataProvider.h"
 
@@ -41,11 +43,28 @@ class AutoDbDeleter {
   std::string db_path_;
 };
 
-// Returns nullptr (a falsey unique_ptr) if opening fails.
-std::unique_ptr<leveldb::DB> OpenDB(const std::string& path) {
-  leveldb::Options options;
-  options.create_if_missing = true;
+static leveldb::Options GetOptions(FuzzedDataProvider& fuzzed_data)
+{
+    size_t nCacheSize = fuzzed_data.ConsumeIntegralInRange<size_t>(1024, 1024*1024*32);
+    leveldb::Options options;
+    options.block_cache = leveldb::NewLRUCache(nCacheSize / 2);
+    options.write_buffer_size = nCacheSize / 4; // up to two write buffers may be held in memory simultaneously
+    options.filter_policy = leveldb::NewBloomFilterPolicy(10);
+    options.compression = leveldb::kNoCompression;
+    if (leveldb::kMajorVersion > 1 || (leveldb::kMajorVersion == 1 && leveldb::kMinorVersion >= 16)) {
+        // LevelDB versions before 1.16 consider short writes to be corruption. Only trigger error
+        // on corruption in later versions.
+        options.paranoid_checks = true;
+    }
+    options.max_file_size = fuzzed_data.ConsumeIntegralInRange<size_t>(1024, 1024*1024*32);
+    options.create_if_missing = true;
+    return options;
+}
 
+// Returns nullptr (a falsey unique_ptr) if opening fails.
+std::unique_ptr<leveldb::DB> OpenDB(const std::string& path, FuzzedDataProvider& fuzzed_data) {
+  leveldb::Options options = GetOptions(fuzzed_data);
+  
   leveldb::DB* db_ptr;
   leveldb::Status status = leveldb::DB::Open(options, path, &db_ptr);
   if (!status.ok())
@@ -97,14 +116,14 @@ bool VerifyContents(leveldb::DB* db, const std::unordered_map<std::string, std::
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   AutoDbDeleter db_deleter;
 
-  std::unique_ptr<leveldb::DB> db = OpenDB(db_deleter.path());
+  FuzzedDataProvider fuzzed_data(data, size);
+  std::unique_ptr<leveldb::DB> db = OpenDB(db_deleter.path(), fuzzed_data);
   if (!db.get())
     return 0;
 
   // Create reference map to track expected contents
   std::unordered_map<std::string, std::string> reference_map;
 
-  FuzzedDataProvider fuzzed_data(data, size);
   int counter = 100;
   while (fuzzed_data.remaining_bytes() != 0 && counter-- > 0) {
     FuzzOp fuzz_op = fuzzed_data.ConsumeEnum<FuzzOp>();
@@ -155,7 +174,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
      
       
       db.reset();
-      db = OpenDB(db_deleter.path());
+      db = OpenDB(db_deleter.path(), fuzzed_data);
       if (!db)
         return 0;
       
