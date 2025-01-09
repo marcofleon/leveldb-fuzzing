@@ -1,0 +1,3 @@
+[submodule "leveldb-subtree"]
+	path = leveldb-subtree
+	url = git@github.com:bitcoin-core/leveldb-subtree.git
