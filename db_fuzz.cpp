@@ -6,6 +6,7 @@
 #include <random>
 #include <unordered_map>
 #include <cassert>
+#include <optional>
 
 #include "leveldb/db.h"
 #include "leveldb/iterator.h"
@@ -128,10 +129,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
   // Create reference map to track expected contents
   std::unordered_map<std::string, std::string> reference_map;
-  size_t total_bytes = 0;
+  size_t total_size = 0;
   constexpr size_t max_size = 2ULL * 1024 * 1024 * 1024;
 
-  LIMITED_WHILE(fuzzed_data.remaining_bytes() != 0, 100, total_bytes, max_size) {
+  LIMITED_WHILE(fuzzed_data.remaining_bytes() != 0, 100, total_size, max_size) {
     FuzzOp fuzz_op = fuzzed_data.ConsumeEnum<FuzzOp>();
 
     switch (fuzz_op) {
@@ -141,7 +142,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       std::string value = fuzzed_data.ConsumeRandomLengthString();
       if (fuzzed_data.ConsumeBool()) {
           value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*20));
-          total_bytes += value.size();
+          total_size += value.size();
       }
       db->Put(leveldb::WriteOptions(), key, value);
       reference_map[key] = value;
@@ -198,10 +199,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     }
     case FuzzOp::kWrite: {
       leveldb::WriteBatch batch;
-      std::unordered_map<std::string, std::string> batch_changes;
+      std::unordered_map<std::string, std::optional<std::string>> batch_changes;
       size_t batch_size = 0;
     
-      LIMITED_WHILE(fuzzed_data.ConsumeBool(), 100, batch_size, max_size) {
+      LIMITED_WHILE(fuzzed_data.ConsumeBool(), 100, total_size + batch_size, max_size) {
 
         std::string key = fuzzed_data.ConsumeRandomLengthString();
         
@@ -212,12 +213,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             }
             batch.Put(key, value);
             batch_changes[key] = value;
-            batch_size += value.size();
-            //reference_map[key] = value;  
+            batch_size += value.size();  
         } else {
             batch.Delete(key);
-            batch_changes[key] = "";
-            //reference_map.erase(key);    
+            batch_changes[key] = std::nullopt;  
         }
       }
     
@@ -226,11 +225,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     
       leveldb::Status status = db->Write(write_options, &batch);
       if (status.ok()) {
-        for (const auto& change : batch_changes) {
-            if (change.second.empty()) {
-                reference_map.erase(change.first);
+        total_size += batch_size;
+        for (const auto& [key, value] : batch_changes) {
+            if (!value) {
+                reference_map.erase(key);
             } else {
-                reference_map[change.first] = change.second;
+                reference_map[key] = *value;
             }
         }
       }
