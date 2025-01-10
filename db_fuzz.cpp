@@ -13,8 +13,12 @@
 #include "leveldb/status.h"
 #include "leveldb/cache.h"
 #include "leveldb/filter_policy.h"
+#include "leveldb/write_batch.h"
 
 #include "FuzzedDataProvider.h"
+
+#define LIMITED_WHILE(condition, limit, total_size, max_size) \
+    for (unsigned _count{limit}; (condition) && _count && total_size < max_size; --_count)
 
 namespace {
 
@@ -82,10 +86,11 @@ enum class FuzzOp {
   kGetReleaseSnapshot = 5,
   kReopenDb = 6,
   kCompactRange = 7,
+  kWrite = 8,
   // Add new values here.
 
   // When adding new values, update to the last value above.
-  kMaxValue = kCompactRange,
+  kMaxValue = kWrite,
 };
 
 // Helper function to verify DB contents match the map
@@ -123,9 +128,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
   // Create reference map to track expected contents
   std::unordered_map<std::string, std::string> reference_map;
+  size_t total_bytes = 0;
+  constexpr size_t max_size = 2ULL * 1024 * 1024 * 1024;
 
-  int counter = 100;
-  while (fuzzed_data.remaining_bytes() != 0 && counter-- > 0) {
+  LIMITED_WHILE(fuzzed_data.remaining_bytes() != 0, 100, total_bytes, max_size) {
     FuzzOp fuzz_op = fuzzed_data.ConsumeEnum<FuzzOp>();
 
     switch (fuzz_op) {
@@ -135,6 +141,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       std::string value = fuzzed_data.ConsumeRandomLengthString();
       if (fuzzed_data.ConsumeBool()) {
           value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*20));
+          total_bytes += value.size();
       }
       db->Put(leveldb::WriteOptions(), key, value);
       reference_map[key] = value;
@@ -187,6 +194,46 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       leveldb::Slice begin_slice(begin_key);
       leveldb::Slice end_slice(end_key);
       db->CompactRange(&begin_slice, &end_slice);
+      break;
+    }
+    case FuzzOp::kWrite: {
+      leveldb::WriteBatch batch;
+      std::unordered_map<std::string, std::string> batch_changes;
+      size_t batch_size = 0;
+    
+      LIMITED_WHILE(fuzzed_data.ConsumeBool(), 100, batch_size, max_size) {
+
+        std::string key = fuzzed_data.ConsumeRandomLengthString();
+        
+        if (fuzzed_data.ConsumeBool()) {
+            std::string value = fuzzed_data.ConsumeRandomLengthString();
+            if (fuzzed_data.ConsumeBool()) {
+                value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*20));
+            }
+            batch.Put(key, value);
+            batch_changes[key] = value;
+            batch_size += value.size();
+            //reference_map[key] = value;  
+        } else {
+            batch.Delete(key);
+            batch_changes[key] = "";
+            //reference_map.erase(key);    
+        }
+      }
+    
+      leveldb::WriteOptions write_options;
+      write_options.sync = fuzzed_data.ConsumeBool();
+    
+      leveldb::Status status = db->Write(write_options, &batch);
+      if (status.ok()) {
+        for (const auto& change : batch_changes) {
+            if (change.second.empty()) {
+                reference_map.erase(change.first);
+            } else {
+                reference_map[change.first] = change.second;
+            }
+        }
+      }
       break;
     }
     }
