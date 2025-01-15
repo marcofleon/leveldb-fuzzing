@@ -5,6 +5,7 @@
 #include <string>
 #include <random>
 #include <unordered_map>
+#include <map>
 #include <cassert>
 #include <optional>
 
@@ -95,12 +96,21 @@ enum class FuzzOp {
 };
 
 // Helper function to verify DB contents match the map
-bool VerifyContents(leveldb::DB* db, const std::unordered_map<std::string, std::string>& reference_map) {
+bool VerifyContents(leveldb::DB* db, const std::map<std::string, std::string>& reference_map) {
   // First check that every key-value in the map exists in leveldb
   for (const auto& [key, expected_value] : reference_map) {
     std::string actual_value;
     auto status = db->Get(leveldb::ReadOptions(), key, &actual_value);
-    if (!status.ok() || actual_value != expected_value) {
+    if (!status.ok()) {
+      fprintf(stderr, "Verification failed: Key '%s' missing from DB (status: %s)\n", 
+              key.c_str(), status.ToString().c_str());
+      return false;
+    }
+    if (actual_value != expected_value) {
+      fprintf(stderr, "Verification failed: Value mismatch for key '%s'\n"
+              "  Expected: '%s'\n"
+              "  Got:      '%s'\n",
+              key.c_str(), expected_value.c_str(), actual_value.c_str());
       return false;
     }
   }
@@ -108,15 +118,23 @@ bool VerifyContents(leveldb::DB* db, const std::unordered_map<std::string, std::
   // Then verify no extra keys exist in leveldb
   std::unique_ptr<leveldb::Iterator> it(db->NewIterator(leveldb::ReadOptions()));
   for (it->SeekToFirst(); it->Valid(); it->Next()) {
-    auto map_it = reference_map.find(it->key().ToString());
-    if (map_it == reference_map.end() || map_it->second != it->value().ToString()) {
+    std::string key = it->key().ToString();
+    auto map_it = reference_map.find(key);
+    if (map_it == reference_map.end()) {
+      fprintf(stderr, "Verification failed: Unexpected key '%s' found in DB\n", key.c_str());
+      return false;
+    }
+    if (map_it->second != it->value().ToString()) {
+      fprintf(stderr, "Verification failed: Iterator value mismatch for key '%s'\n"
+              "  Expected: '%s'\n"
+              "  Got:      '%s'\n",
+              key.c_str(), map_it->second.c_str(), it->value().ToString().c_str());
       return false;
     }
   }
 
   return true;
 }
-
 }  // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
@@ -128,7 +146,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     return 0;
 
   // Create reference map to track expected contents
-  std::unordered_map<std::string, std::string> reference_map;
+  std::map<std::string, std::string> reference_map;
   size_t total_size = 0;
   constexpr size_t max_size = 2ULL * 1024 * 1024 * 1024;
 
@@ -199,7 +217,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     }
     case FuzzOp::kWrite: {
       leveldb::WriteBatch batch;
-      std::unordered_map<std::string, std::optional<std::string>> batch_changes;
+      std::map<std::string, std::optional<std::string>> batch_changes;
       size_t batch_size = 0;
     
       LIMITED_WHILE(fuzzed_data.ConsumeBool(), 100, total_size + batch_size, max_size) {
