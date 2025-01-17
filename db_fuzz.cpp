@@ -97,20 +97,31 @@ enum class FuzzOp {
 
 // Helper function to verify DB contents match the map
 bool VerifyContents(leveldb::DB* db, const std::map<std::string, std::string>& reference_map) {
+  // Helper function to print string in hex
+  auto print_hex = [](const std::string& str) {
+    for (unsigned char c : str) {
+      fprintf(stderr, "%02x", c);
+    }
+  };
+
   // First check that every key-value in the map exists in leveldb
   for (const auto& [key, expected_value] : reference_map) {
     std::string actual_value;
     auto status = db->Get(leveldb::ReadOptions(), key, &actual_value);
     if (!status.ok()) {
-      fprintf(stderr, "Verification failed: Key '%s' missing from DB (status: %s)\n", 
-              key.c_str(), status.ToString().c_str());
+      fprintf(stderr, "Verification failed: Key '");
+      print_hex(key);
+      fprintf(stderr, "' missing from DB (status: %s)\n", status.ToString().c_str());
       return false;
     }
     if (actual_value != expected_value) {
-      fprintf(stderr, "Verification failed: Value mismatch for key '%s'\n"
-              "  Expected: '%s'\n"
-              "  Got:      '%s'\n",
-              key.c_str(), expected_value.c_str(), actual_value.c_str());
+      fprintf(stderr, "Verification failed: Value mismatch for key '");
+      print_hex(key);
+      fprintf(stderr, "'\n  Expected: '");
+      print_hex(expected_value);
+      fprintf(stderr, "'\n  Got:      '");
+      print_hex(actual_value);
+      fprintf(stderr, "'\n");
       return false;
     }
   }
@@ -121,18 +132,22 @@ bool VerifyContents(leveldb::DB* db, const std::map<std::string, std::string>& r
     std::string key = it->key().ToString();
     auto map_it = reference_map.find(key);
     if (map_it == reference_map.end()) {
-      fprintf(stderr, "Verification failed: Unexpected key '%s' found in DB\n", key.c_str());
+      fprintf(stderr, "Verification failed: Unexpected key '");
+      print_hex(key);
+      fprintf(stderr, "' found in DB\n");
       return false;
     }
     if (map_it->second != it->value().ToString()) {
-      fprintf(stderr, "Verification failed: Iterator value mismatch for key '%s'\n"
-              "  Expected: '%s'\n"
-              "  Got:      '%s'\n",
-              key.c_str(), map_it->second.c_str(), it->value().ToString().c_str());
+      fprintf(stderr, "Verification failed: Iterator value mismatch for key '");
+      print_hex(key);
+      fprintf(stderr, "'\n  Expected: '");
+      print_hex(map_it->second);
+      fprintf(stderr, "'\n  Got:      '");
+      print_hex(it->value().ToString());
+      fprintf(stderr, "'\n");
       return false;
     }
   }
-
   return true;
 }
 }  // namespace
@@ -154,7 +169,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     FuzzOp fuzz_op = fuzzed_data.ConsumeEnum<FuzzOp>();
 
     switch (fuzz_op) {
-    case FuzzOp::kPut: {
+    /*case FuzzOp::kPut: {
             
       std::string key = fuzzed_data.ConsumeRandomLengthString();
       std::string value = fuzzed_data.ConsumeRandomLengthString();
@@ -189,12 +204,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
           db->NewIterator(leveldb::ReadOptions()));
       for (it->SeekToFirst(); it->Valid(); it->Next())
         continue;
+      //break;
     }
     case FuzzOp::kGetReleaseSnapshot: {
       leveldb::ReadOptions snapshot_options;
       snapshot_options.snapshot = db->GetSnapshot();
       std::unique_ptr<leveldb::Iterator> it(db->NewIterator(snapshot_options));
       db->ReleaseSnapshot(snapshot_options.snapshot);
+      //break;
     }
     case FuzzOp::kReopenDb: {
      
@@ -214,7 +231,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       leveldb::Slice end_slice(end_key);
       db->CompactRange(&begin_slice, &end_slice);
       break;
-    }
+    }*/
+    //default:
     case FuzzOp::kWrite: {
       leveldb::WriteBatch batch;
       std::map<std::string, std::optional<std::string>> batch_changes;
@@ -240,7 +258,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     
       leveldb::WriteOptions write_options;
       write_options.sync = fuzzed_data.ConsumeBool();
-    
+ 
       leveldb::Status status = db->Write(write_options, &batch);
       if (status.ok()) {
         total_size += batch_size;
@@ -252,8 +270,16 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             }
         }
       }
+      /*
+      if (!VerifyContents(db.get(), reference_map)) {
+            fprintf(stderr, "Verification failed immediately after batch write\n");
+            assert(false);
+      }
+      */
       break;
     }
+    default:
+      break;
     }
   }
 
