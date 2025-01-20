@@ -134,7 +134,9 @@ bool VerifyContents(leveldb::DB* db, const std::map<std::string, std::string>& r
     if (map_it == reference_map.end()) {
       fprintf(stderr, "Verification failed: Unexpected key '");
       print_hex(key);
-      fprintf(stderr, "' found in DB\n");
+      fprintf(stderr, "' found in DB with value '");
+      print_hex(it->value().ToString());
+      fprintf(stderr, "'\n");
       return false;
     }
     if (map_it->second != it->value().ToString()) {
@@ -260,6 +262,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       write_options.sync = fuzzed_data.ConsumeBool();
  
       leveldb::Status status = db->Write(write_options, &batch);
+      //fprintf(stderr, "Batch write status: %s\n", status.ToString().c_str());
       if (status.ok()) {
         total_size += batch_size;
         for (const auto& [key, value] : batch_changes) {
@@ -270,12 +273,32 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             }
         }
       }
-      /*
+      
       if (!VerifyContents(db.get(), reference_map)) {
-            fprintf(stderr, "Verification failed immediately after batch write\n");
-            assert(false);
+        auto print_hex = [](const std::string& str) {
+            for (unsigned char c : str) {
+                fprintf(stderr, "%02x", c);
+            }
+        };
+
+        fprintf(stderr, "\nBatch operation that caused failure:\n");
+        fprintf(stderr, "Write status: %s\n", status.ToString().c_str());
+        fprintf(stderr, "Batch operations:\n");
+        for (const auto& [key, value] : batch_changes) {
+            if (!value) {
+                fprintf(stderr, "  DELETE key='");
+                print_hex(key);
+                fprintf(stderr, "'\n");
+            } else {
+                fprintf(stderr, "  PUT key='");
+                print_hex(key);
+                fprintf(stderr, "' value='");
+                print_hex(*value);
+                fprintf(stderr, "'\n");
+            }
+        }
+        assert(false);
       }
-      */
       break;
     }
     default:
