@@ -32,8 +32,13 @@ class AutoDbDeleter {
     std::random_device rd;
     std::mt19937_64 gen(rd());
     std::uniform_int_distribution<uint64_t> dis;
+
+    std::string random_value;
+    for (int i = 0; i < 4; i++) {
+        random_value += std::to_string(dis(gen));
+    }
     
-    db_path_ = std::string("/tmp/testdb_") + std::to_string(dis(gen));
+    db_path_ = std::string("/tmp/testdb_") + random_value;
   }
 
   AutoDbDeleter(const AutoDbDeleter&) = delete;
@@ -171,7 +176,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     FuzzOp fuzz_op = fuzzed_data.ConsumeEnum<FuzzOp>();
 
     switch (fuzz_op) {
-    /*case FuzzOp::kPut: {
+    case FuzzOp::kPut: {
             
       std::string key = fuzzed_data.ConsumeRandomLengthString();
       std::string value = fuzzed_data.ConsumeRandomLengthString();
@@ -206,24 +211,21 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
           db->NewIterator(leveldb::ReadOptions()));
       for (it->SeekToFirst(); it->Valid(); it->Next())
         continue;
-      //break;
+      break;
     }
+    
     case FuzzOp::kGetReleaseSnapshot: {
       leveldb::ReadOptions snapshot_options;
       snapshot_options.snapshot = db->GetSnapshot();
       std::unique_ptr<leveldb::Iterator> it(db->NewIterator(snapshot_options));
       db->ReleaseSnapshot(snapshot_options.snapshot);
-      //break;
+      break;
     }
     case FuzzOp::kReopenDb: {
-     
-      
       db.reset();
       db = OpenDB(db_deleter.path(), fuzzed_data);
       if (!db)
         return 0;
-      
-      
       break;
     }
     case FuzzOp::kCompactRange: {
@@ -233,8 +235,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       leveldb::Slice end_slice(end_key);
       db->CompactRange(&begin_slice, &end_slice);
       break;
-    }*/
-    //default:
+    }
     case FuzzOp::kWrite: {
       leveldb::WriteBatch batch;
       std::map<std::string, std::optional<std::string>> batch_changes;
@@ -262,7 +263,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       write_options.sync = fuzzed_data.ConsumeBool();
  
       leveldb::Status status = db->Write(write_options, &batch);
-      //fprintf(stderr, "Batch write status: %s\n", status.ToString().c_str());
+      
       if (status.ok()) {
         total_size += batch_size;
         for (const auto& [key, value] : batch_changes) {
@@ -273,8 +274,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             }
         }
       }
-      
-      if (!VerifyContents(db.get(), reference_map)) {
+      break;
+    }
+    //default:
+      //break;
+    }
+  }
+
+  if (!VerifyContents(db.get(), reference_map)) {
         auto print_hex = [](const std::string& str) {
             for (unsigned char c : str) {
                 fprintf(stderr, "%02x", c);
@@ -283,6 +290,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
         fprintf(stderr, "\nBatch operation that caused failure:\n");
         fprintf(stderr, "Write status: %s\n", status.ToString().c_str());
+        fprintf(stderr, "Batch changes size: %zu\n", batch_changes.size());
         fprintf(stderr, "Batch operations:\n");
         for (const auto& [key, value] : batch_changes) {
             if (!value) {
@@ -297,17 +305,32 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 fprintf(stderr, "'\n");
             }
         }
+
+        fprintf(stderr, "\nVerification failed! State dump:\n");
+
+        fprintf(stderr, "Reference map contents:\n");
+        for (const auto& [key, value] : reference_map) {
+            fprintf(stderr, "  key='");
+            print_hex(key);
+            fprintf(stderr, "' value='");
+            print_hex(value);
+            fprintf(stderr, "'\n");
+        }
+
+        fprintf(stderr, "DB contents:\n");
+        std::unique_ptr<leveldb::Iterator> it(db->NewIterator(leveldb::ReadOptions()));
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            fprintf(stderr, "  key='");
+            print_hex(it->key().ToString());
+            fprintf(stderr, "' value='");
+            print_hex(it->value().ToString());
+            fprintf(stderr, "'\n");
+        }
+
         assert(false);
-      }
-      break;
-    }
-    default:
-      break;
-    }
   }
 
-  // Verify final contents match
-  assert(VerifyContents(db.get(), reference_map));
+  //assert(VerifyContents(db.get(), reference_map));
 
   return 0;
 }
