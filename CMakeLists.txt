@@ -13,6 +13,8 @@ set(LEVELDB_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LEVELDB_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 add_subdirectory(leveldb-subtree)
 
+set_target_properties(leveldb PROPERTIES CXX_STANDARD 20)
+
 add_executable(db_fuzzer db_fuzz.cpp)
 
 target_compile_options(db_fuzzer PRIVATE 
