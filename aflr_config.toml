@@ -1,0 +1,11 @@
+[target]
+
+[coverage]
+
+[afl_cfg]
+
+afl_flags = "-t 100"
+
+[session]
+
+[misc]

@@ -272,41 +272,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 reference_map[key] = *value;
             }
         }
-        /*
-        if (!VerifyContents(db.get(), reference_map)) {
-            auto print_hex = [](const std::string& str) {
-                for (unsigned char c : str) {
-                    fprintf(stderr, "%02x", c);
-                }
-            };
-
-            fprintf(stderr, "\nBatch operation that caused failure:\n");
-            fprintf(stderr, "Write status: %s\n", status.ToString().c_str());
-            fprintf(stderr, "Batch changes size: %zu\n", batch_changes.size());
-            fprintf(stderr, "Batch operations:\n");
-            for (const auto& [key, value] : batch_changes) {
-                if (!value) {
-                    fprintf(stderr, "  DELETE key='");
-                    print_hex(key);
-                    fprintf(stderr, "'\n");
-                } else {
-                    fprintf(stderr, "  PUT key='");
-                    print_hex(key);
-                    fprintf(stderr, "' value='");
-                    print_hex(*value);
-                    fprintf(stderr, "'\n");
-                }
-            }
-        }
-        */
       }
       break;
     }
-    //default:
-      //break;
     }
   }
-
+  /*
   if (!VerifyContents(db.get(), reference_map)) {
         auto print_hex = [](const std::string& str) {
             for (unsigned char c : str) {
@@ -337,8 +308,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
         assert(false);
   }
+  */
 
-  //assert(VerifyContents(db.get(), reference_map));
+  assert(VerifyContents(db.get(), reference_map));
 
   return 0;
 }
