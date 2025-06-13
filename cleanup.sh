@@ -3,7 +3,7 @@
 TMP_DIR="/tmp"
 DB_PATTERN="testdb_*"
 KEEP_N=100
-SLEEP_INTERVAL=2
+SLEEP_INTERVAL=1
 
 echo "Keep newest $KEEP_N directories..."
 echo "  Watching directory : $TMP_DIR"

@@ -78,8 +78,11 @@ std::unique_ptr<leveldb::DB> OpenDB(const std::string& path, FuzzedDataProvider&
   
   leveldb::DB* db_ptr;
   leveldb::Status status = leveldb::DB::Open(options, path, &db_ptr);
-  if (!status.ok())
-    return nullptr;
+  if (!status.ok()) {
+    fprintf(stderr, "failure inside open: %s\n", status.ToString().c_str());
+    assert(status.ok());
+    //return nullptr;
+  }
 
   return std::unique_ptr<leveldb::DB>(db_ptr);
 }
@@ -102,11 +105,16 @@ enum class FuzzOp {
 
 // Helper function to verify DB contents match the map
 bool VerifyContents(leveldb::DB* db, const std::map<std::string, std::string>& reference_map) {
-  // Helper function to print string in hex
-  auto print_hex = [](const std::string& str) {
-    for (unsigned char c : str) {
-      fprintf(stderr, "%02x", c);
+
+  auto print_summary = [](const std::string& str) {
+    fprintf(stderr, "(size=%zu) '", str.length());
+    for (size_t i = 0; i < std::min(str.length(), (size_t)16); ++i) {
+      fprintf(stderr, "%02x", static_cast<unsigned char>(str[i]));
     }
+    if (str.length() > 16) {
+      fprintf(stderr, "...");
+    }
+    fprintf(stderr, "'");
   };
 
   // First check that every key-value in the map exists in leveldb
@@ -114,19 +122,19 @@ bool VerifyContents(leveldb::DB* db, const std::map<std::string, std::string>& r
     std::string actual_value;
     auto status = db->Get(leveldb::ReadOptions(), key, &actual_value);
     if (!status.ok()) {
-      fprintf(stderr, "Verification failed: Key '");
-      print_hex(key);
-      fprintf(stderr, "' missing from DB (status: %s)\n", status.ToString().c_str());
+      fprintf(stderr, "Verification failed: Key ");
+      print_summary(key);
+      fprintf(stderr, " missing from DB (status: %s)\n", status.ToString().c_str());
       return false;
     }
     if (actual_value != expected_value) {
-      fprintf(stderr, "Verification failed: Value mismatch for key '");
-      print_hex(key);
-      fprintf(stderr, "'\n  Expected: '");
-      print_hex(expected_value);
-      fprintf(stderr, "'\n  Got:      '");
-      print_hex(actual_value);
-      fprintf(stderr, "'\n");
+      fprintf(stderr, "Verification failed: Value mismatch for key ");
+      print_summary(key);
+      fprintf(stderr, "\n  Expected: ");
+      print_summary(expected_value);
+      fprintf(stderr, "\n  Got:      ");
+      print_summary(actual_value);
+      fprintf(stderr, "\n");
       return false;
     }
   }
@@ -137,21 +145,21 @@ bool VerifyContents(leveldb::DB* db, const std::map<std::string, std::string>& r
     std::string key = it->key().ToString();
     auto map_it = reference_map.find(key);
     if (map_it == reference_map.end()) {
-      fprintf(stderr, "Verification failed: Unexpected key '");
-      print_hex(key);
-      fprintf(stderr, "' found in DB with value '");
-      print_hex(it->value().ToString());
-      fprintf(stderr, "'\n");
+      fprintf(stderr, "Verification failed: Unexpected key ");
+      print_summary(key);
+      fprintf(stderr, " found in DB with value ");
+      print_summary(it->value().ToString());
+      fprintf(stderr, "\n");
       return false;
     }
     if (map_it->second != it->value().ToString()) {
-      fprintf(stderr, "Verification failed: Iterator value mismatch for key '");
-      print_hex(key);
-      fprintf(stderr, "'\n  Expected: '");
-      print_hex(map_it->second);
-      fprintf(stderr, "'\n  Got:      '");
-      print_hex(it->value().ToString());
-      fprintf(stderr, "'\n");
+      fprintf(stderr, "Verification failed: Iterator value mismatch for key ");
+      print_summary(key);
+      fprintf(stderr, "\n  Expected: ");
+      print_summary(map_it->second);
+      fprintf(stderr, "\n  Got:      ");
+      print_summary(it->value().ToString());
+      fprintf(stderr, "\n");
       return false;
     }
   }
@@ -164,13 +172,16 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
   FuzzedDataProvider fuzzed_data(data, size);
   std::unique_ptr<leveldb::DB> db = OpenDB(db_deleter.path(), fuzzed_data);
-  if (!db.get())
-    return 0;
+  if (!db.get()) {
+    fprintf(stderr, "couldn't get db after open\n");
+    //return 0;
+    assert(db.get());
+  }
 
   // Create reference map to track expected contents
   std::map<std::string, std::string> reference_map;
   size_t total_size = 0;
-  constexpr size_t max_size = 2ULL * 1024 * 1024 * 1024;
+  constexpr size_t max_size = 512 * 1024 * 1024;
 
   LIMITED_WHILE(fuzzed_data.remaining_bytes() != 0, 100, total_size, max_size) {
     FuzzOp fuzz_op = fuzzed_data.ConsumeEnum<FuzzOp>();
@@ -184,14 +195,24 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
           value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*20));
           total_size += value.size();
       }
-      db->Put(leveldb::WriteOptions(), key, value);
-      reference_map[key] = value;
+      leveldb::Status status = db->Put(leveldb::WriteOptions(), key, value);
+      if (status.ok()) {
+          reference_map[key] = value;
+      } else {
+          fprintf(stderr, "db->Put() failed: %s\n", status.ToString().c_str());
+          assert(false);
+      }
       break;
     }
     case FuzzOp::kDelete: {
       std::string key = fuzzed_data.ConsumeRandomLengthString();
-      db->Delete(leveldb::WriteOptions(), key);
-      reference_map.erase(key);
+      leveldb::Status status = db->Delete(leveldb::WriteOptions(), key);
+      if (status.ok()) {
+          reference_map.erase(key);
+      } else {
+           fprintf(stderr, "db->Delete() failed: %s\n", status.ToString().c_str());
+           assert(false);
+      }
       break;
     }
     case FuzzOp::kGet: {
@@ -223,8 +244,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     case FuzzOp::kReopenDb: {
       db.reset();
       db = OpenDB(db_deleter.path(), fuzzed_data);
-      if (!db)
-        return 0;
+      if (!db) {
+        fprintf(stderr, "couldn't reopen db\n");
+        assert(db);
+        //return 0;
+      }
       break;
     }
     case FuzzOp::kCompactRange: {
@@ -272,7 +296,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 reference_map[key] = *value;
             }
         }
+      } else {
+          //fprintf(stderr, "problem with writing");
+          fprintf(stderr, "db->Write() with batch failed: %s\n", status.ToString().c_str());
+          assert(false);
       }
+
       break;
     }
     }
@@ -311,6 +340,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   */
 
   assert(VerifyContents(db.get(), reference_map));
+
 
   return 0;
 }
