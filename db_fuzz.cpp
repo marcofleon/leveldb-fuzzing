@@ -26,35 +26,35 @@ namespace {
 
 // Deletes the database directory when going out of scope.
 class AutoDbDeleter {
- public:
-  AutoDbDeleter() {
-    // Create a random directory name
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<uint64_t> dis;
+    public:
+        AutoDbDeleter() {
+        // Create a random directory name
+        std::random_device rd;
+        std::mt19937_64 gen(rd());
+        std::uniform_int_distribution<uint64_t> dis;
 
-    std::string random_value;
-    for (int i = 0; i < 4; i++) {
-        random_value += std::to_string(dis(gen));
-    }
+        std::string random_value;
+        for (int i = 0; i < 4; i++) {
+            random_value += std::to_string(dis(gen));
+        }
     
-    db_path_ = std::string("/tmp/testdb_") + random_value;
-  }
+        db_path_ = std::string("/tmp/testdb_") + random_value;
+    }
 
-  AutoDbDeleter(const AutoDbDeleter&) = delete;
-  AutoDbDeleter& operator=(const AutoDbDeleter&) = delete;
+    AutoDbDeleter(const AutoDbDeleter&) = delete;
+    AutoDbDeleter& operator=(const AutoDbDeleter&) = delete;
 
-  ~AutoDbDeleter() {
-    std::filesystem::remove_all(db_path_);
-  }
+    ~AutoDbDeleter() {
+        std::filesystem::remove_all(db_path_);
+    }
 
-  const std::string& path() const { return db_path_; }
+    const std::string& path() const { return db_path_; }
 
- private:
-  std::string db_path_;
+    private:
+        std::string db_path_;
 };
 
-static leveldb::Options GetOptions(FuzzedDataProvider& fuzzed_data)
+static leveldb::Options GetOptions(FuzzedDataProvider& fuzzed_data) 
 {
     size_t nCacheSize = fuzzed_data.ConsumeIntegralInRange<size_t>(1024, 1024*1024*32);
     leveldb::Options options;
@@ -73,239 +73,279 @@ static leveldb::Options GetOptions(FuzzedDataProvider& fuzzed_data)
 }
 
 // Returns nullptr (a falsey unique_ptr) if opening fails.
-std::unique_ptr<leveldb::DB> OpenDB(const std::string& path, FuzzedDataProvider& fuzzed_data) {
-  leveldb::Options options = GetOptions(fuzzed_data);
+std::unique_ptr<leveldb::DB> OpenDB(const std::string& path, FuzzedDataProvider& fuzzed_data) 
+{
+    leveldb::Options options = GetOptions(fuzzed_data);
   
-  leveldb::DB* db_ptr;
-  leveldb::Status status = leveldb::DB::Open(options, path, &db_ptr);
-  if (!status.ok()) {
-    fprintf(stderr, "failure inside open: %s\n", status.ToString().c_str());
-    assert(status.ok());
-    //return nullptr;
-  }
+    leveldb::DB* db_ptr;
+    leveldb::Status status = leveldb::DB::Open(options, path, &db_ptr);
+    if (!status.ok()) {
+        fprintf(stderr, "failure inside open: %s\n", status.ToString().c_str());
+        assert(status.ok());
+        //return nullptr;
+    }
 
-  return std::unique_ptr<leveldb::DB>(db_ptr);
+    return std::unique_ptr<leveldb::DB>(db_ptr);
 }
 
 enum class FuzzOp {
-  kPut = 0,
-  kGet = 1,
-  kDelete = 2,
-  kGetProperty = 3,
-  kIterate = 4,
-  kGetReleaseSnapshot = 5,
-  kReopenDb = 6,
-  kCompactRange = 7,
-  kWrite = 8,
-  // Add new values here.
+    kPut = 0,
+    kGet = 1,
+    kDelete = 2,
+    kGetProperty = 3,
+    kIterate = 4,
+    kGetReleaseSnapshot = 5,
+    kReopenDb = 6,
+    kCompactRange = 7,
+    kWrite = 8,
+    // Add new values here.
 
-  // When adding new values, update to the last value above.
-  kMaxValue = kWrite,
+    // When adding new values, update to the last value above.
+    kMaxValue = kWrite,
 };
 
 // Helper function to verify DB contents match the map
-bool VerifyContents(leveldb::DB* db, const std::map<std::string, std::string>& reference_map) {
+bool VerifyContents(leveldb::DB* db, const std::map<std::string, std::string>& reference_map) 
+{
+    auto print_summary = [](const std::string& str) {
+        fprintf(stderr, "(size=%zu) '", str.length());
+        for (size_t i = 0; i < std::min(str.length(), (size_t)16); ++i) {
+            fprintf(stderr, "%02x", static_cast<unsigned char>(str[i]));
+        }
+        if (str.length() > 16) {
+            fprintf(stderr, "...");
+        }
+        fprintf(stderr, "'");
+    };
 
-  auto print_summary = [](const std::string& str) {
-    fprintf(stderr, "(size=%zu) '", str.length());
-    for (size_t i = 0; i < std::min(str.length(), (size_t)16); ++i) {
-      fprintf(stderr, "%02x", static_cast<unsigned char>(str[i]));
+    // First check that every key-value in the map exists in leveldb
+    for (const auto& [key, expected_value] : reference_map) {
+        std::string actual_value;
+        auto status = db->Get(leveldb::ReadOptions(), key, &actual_value);
+        if (!status.ok()) {
+            fprintf(stderr, "Verification failed: Key ");
+            print_summary(key);
+            fprintf(stderr, " missing from DB (status: %s)\n", status.ToString().c_str());
+            return false;
+        }
+        if (actual_value != expected_value) {
+            fprintf(stderr, "Verification failed: Value mismatch for key ");
+            print_summary(key);
+            fprintf(stderr, "\n  Expected: ");
+            print_summary(expected_value);
+            fprintf(stderr, "\n  Got:      ");
+            print_summary(actual_value);
+            fprintf(stderr, "\n");
+            return false;
+        }
     }
-    if (str.length() > 16) {
-      fprintf(stderr, "...");
-    }
-    fprintf(stderr, "'");
-  };
 
-  // First check that every key-value in the map exists in leveldb
-  for (const auto& [key, expected_value] : reference_map) {
-    std::string actual_value;
-    auto status = db->Get(leveldb::ReadOptions(), key, &actual_value);
-    if (!status.ok()) {
-      fprintf(stderr, "Verification failed: Key ");
-      print_summary(key);
-      fprintf(stderr, " missing from DB (status: %s)\n", status.ToString().c_str());
-      return false;
+    // Then verify no extra keys exist in leveldb
+    std::unique_ptr<leveldb::Iterator> it(db->NewIterator(leveldb::ReadOptions()));
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        std::string key = it->key().ToString();
+        auto map_it = reference_map.find(key);
+        if (map_it == reference_map.end()) {
+            fprintf(stderr, "Verification failed: Unexpected key ");
+            print_summary(key);
+            fprintf(stderr, " found in DB with value ");
+            print_summary(it->value().ToString());
+            fprintf(stderr, "\n");
+            return false;
+        }
+        if (map_it->second != it->value().ToString()) {
+            fprintf(stderr, "Verification failed: Iterator value mismatch for key ");
+            print_summary(key);
+            fprintf(stderr, "\n  Expected: ");
+            print_summary(map_it->second);
+            fprintf(stderr, "\n  Got:      ");
+            print_summary(it->value().ToString());
+            fprintf(stderr, "\n");
+            return false;
+        }
     }
-    if (actual_value != expected_value) {
-      fprintf(stderr, "Verification failed: Value mismatch for key ");
-      print_summary(key);
-      fprintf(stderr, "\n  Expected: ");
-      print_summary(expected_value);
-      fprintf(stderr, "\n  Got:      ");
-      print_summary(actual_value);
-      fprintf(stderr, "\n");
-      return false;
-    }
-  }
+    return true;
+}
 
-  // Then verify no extra keys exist in leveldb
-  std::unique_ptr<leveldb::Iterator> it(db->NewIterator(leveldb::ReadOptions()));
-  for (it->SeekToFirst(); it->Valid(); it->Next()) {
-    std::string key = it->key().ToString();
-    auto map_it = reference_map.find(key);
-    if (map_it == reference_map.end()) {
-      fprintf(stderr, "Verification failed: Unexpected key ");
-      print_summary(key);
-      fprintf(stderr, " found in DB with value ");
-      print_summary(it->value().ToString());
-      fprintf(stderr, "\n");
-      return false;
+static std::string ConsumeNonEmptyString(FuzzedDataProvider& fuzzed_data) 
+{
+    std::string result = fuzzed_data.ConsumeRandomLengthString();
+    if (result.empty()) {
+        return "\x01";
     }
-    if (map_it->second != it->value().ToString()) {
-      fprintf(stderr, "Verification failed: Iterator value mismatch for key ");
-      print_summary(key);
-      fprintf(stderr, "\n  Expected: ");
-      print_summary(map_it->second);
-      fprintf(stderr, "\n  Got:      ");
-      print_summary(it->value().ToString());
-      fprintf(stderr, "\n");
-      return false;
-    }
-  }
-  return true;
+    return result;
 }
 }  // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-  AutoDbDeleter db_deleter;
+    AutoDbDeleter db_deleter;
 
-  FuzzedDataProvider fuzzed_data(data, size);
-  std::unique_ptr<leveldb::DB> db = OpenDB(db_deleter.path(), fuzzed_data);
-  if (!db.get()) {
-    fprintf(stderr, "couldn't get db after open\n");
-    //return 0;
-    assert(db.get());
-  }
-
-  // Create reference map to track expected contents
-  std::map<std::string, std::string> reference_map;
-  size_t total_size = 0;
-  constexpr size_t max_size = 512 * 1024 * 1024;
-
-  LIMITED_WHILE(fuzzed_data.remaining_bytes() != 0, 100, total_size, max_size) {
-    FuzzOp fuzz_op = fuzzed_data.ConsumeEnum<FuzzOp>();
-
-    switch (fuzz_op) {
-    case FuzzOp::kPut: {
-            
-      std::string key = fuzzed_data.ConsumeRandomLengthString();
-      std::string value = fuzzed_data.ConsumeRandomLengthString();
-      if (fuzzed_data.ConsumeBool()) {
-          value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*20));
-          total_size += value.size();
-      }
-      leveldb::Status status = db->Put(leveldb::WriteOptions(), key, value);
-      if (status.ok()) {
-          reference_map[key] = value;
-      } else {
-          fprintf(stderr, "db->Put() failed: %s\n", status.ToString().c_str());
-          assert(false);
-      }
-      break;
-    }
-    case FuzzOp::kDelete: {
-      std::string key = fuzzed_data.ConsumeRandomLengthString();
-      leveldb::Status status = db->Delete(leveldb::WriteOptions(), key);
-      if (status.ok()) {
-          reference_map.erase(key);
-      } else {
-           fprintf(stderr, "db->Delete() failed: %s\n", status.ToString().c_str());
-           assert(false);
-      }
-      break;
-    }
-    case FuzzOp::kGet: {
-      std::string key = fuzzed_data.ConsumeRandomLengthString();
-      std::string value;
-      db->Get(leveldb::ReadOptions(), key, &value);
-      break;
-    }
-    case FuzzOp::kGetProperty: {
-      std::string name = fuzzed_data.ConsumeRandomLengthString();
-      std::string value;
-      db->GetProperty(name, &value);
-      break;
-    }
-    case FuzzOp::kIterate: {
-      std::unique_ptr<leveldb::Iterator> it(
-          db->NewIterator(leveldb::ReadOptions()));
-      for (it->SeekToFirst(); it->Valid(); it->Next())
-        continue;
-      break;
-    }
-    case FuzzOp::kGetReleaseSnapshot: {
-      leveldb::ReadOptions snapshot_options;
-      snapshot_options.snapshot = db->GetSnapshot();
-      std::unique_ptr<leveldb::Iterator> it(db->NewIterator(snapshot_options));
-      db->ReleaseSnapshot(snapshot_options.snapshot);
-      break;
-    }
-    case FuzzOp::kReopenDb: {
-      db.reset();
-      db = OpenDB(db_deleter.path(), fuzzed_data);
-      if (!db) {
-        fprintf(stderr, "couldn't reopen db\n");
-        assert(db);
+    FuzzedDataProvider fuzzed_data(data, size);
+    std::unique_ptr<leveldb::DB> db = OpenDB(db_deleter.path(), fuzzed_data);
+    if (!db.get()) {
+        fprintf(stderr, "couldn't get db after open\n");
         //return 0;
-      }
-      break;
+        assert(db.get());
     }
-    case FuzzOp::kCompactRange: {
-      std::string begin_key = fuzzed_data.ConsumeRandomLengthString();
-      std::string end_key =  fuzzed_data.ConsumeRandomLengthString();
-      leveldb::Slice begin_slice(begin_key);
-      leveldb::Slice end_slice(end_key);
-      db->CompactRange(&begin_slice, &end_slice);
-      break;
-    }
-    case FuzzOp::kWrite: {
-      leveldb::WriteBatch batch;
-      std::map<std::string, std::optional<std::string>> batch_changes;
-      size_t batch_size = 0;
-    
-      LIMITED_WHILE(fuzzed_data.ConsumeBool(), 100, total_size + batch_size, max_size) {
 
-        std::string key = fuzzed_data.ConsumeRandomLengthString();
-        
-        if (fuzzed_data.ConsumeBool()) {
-            std::string value = fuzzed_data.ConsumeRandomLengthString();
+    // Create reference map to track expected contents
+    std::map<std::string, std::string> reference_map;
+    size_t total_size = 0;
+    constexpr size_t max_size = 128 * 1024 * 1024;
+
+    LIMITED_WHILE(fuzzed_data.remaining_bytes() != 0, 100, total_size, max_size) {
+        FuzzOp fuzz_op = fuzzed_data.ConsumeEnum<FuzzOp>();
+
+        switch (fuzz_op) {
+        case FuzzOp::kPut: {
+            std::string key = ConsumeNonEmptyString(fuzzed_data);
+            std::string value = ConsumeNonEmptyString(fuzzed_data);
+            //std::string key = fuzzed_data.ConsumeRandomLengthString();
+            //std::string value = fuzzed_data.ConsumeRandomLengthString();
             if (fuzzed_data.ConsumeBool()) {
                 value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*20));
+                total_size += value.size();
             }
-            batch.Put(key, value);
-            batch_changes[key] = value;
-            batch_size += value.size();  
-        } else {
-            batch.Delete(key);
-            batch_changes[key] = std::nullopt;  
-        }
-      }
-    
-      leveldb::WriteOptions write_options;
-      write_options.sync = fuzzed_data.ConsumeBool();
- 
-      leveldb::Status status = db->Write(write_options, &batch);
-      
-      if (status.ok()) {
-        total_size += batch_size;
-        for (const auto& [key, value] : batch_changes) {
-            if (!value) {
+            leveldb::Status status = db->Put(leveldb::WriteOptions(), key, value);
+            if (status.ok()) {
+                reference_map[key] = value;
+            } else {
+                fprintf(stderr, "db->Put() failed: %s\n", status.ToString().c_str());
+                assert(false);
+            } 
+            break;
+        }   
+        case FuzzOp::kDelete: {
+            //std::string key = fuzzed_data.ConsumeRandomLengthString();
+            std::string key = ConsumeNonEmptyString(fuzzed_data);
+            leveldb::Status status = db->Delete(leveldb::WriteOptions(), key);
+            if (status.ok()) {
                 reference_map.erase(key);
             } else {
-                reference_map[key] = *value;
+                fprintf(stderr, "db->Delete() failed: %s\n", status.ToString().c_str());
+                assert(false);
             }
+            break;
         }
-      } else {
-          //fprintf(stderr, "problem with writing");
-          fprintf(stderr, "db->Write() with batch failed: %s\n", status.ToString().c_str());
-          assert(false);
-      }
+        case FuzzOp::kGet: {
+            //std::string key = fuzzed_data.ConsumeRandomLengthString();
+            std::string key = ConsumeNonEmptyString(fuzzed_data);
+            std::string value;
+            db->Get(leveldb::ReadOptions(), key, &value);
+            break;
+        }
+        case FuzzOp::kGetProperty: {
+            //std::string name = fuzzed_data.ConsumeRandomLengthString();
+            std::string name = ConsumeNonEmptyString(fuzzed_data);
+            std::string value;
+            db->GetProperty(name, &value);
+            break;
+        }
+        case FuzzOp::kIterate: {
+            std::unique_ptr<leveldb::Iterator> it(
+            db->NewIterator(leveldb::ReadOptions()));
+            for (it->SeekToFirst(); it->Valid(); it->Next())
+                continue;
+            break;
+        }
+        case FuzzOp::kGetReleaseSnapshot: {
+            leveldb::ReadOptions snapshot_options;
+            snapshot_options.snapshot = db->GetSnapshot();
+            std::unique_ptr<leveldb::Iterator> it(db->NewIterator(snapshot_options));
+            db->ReleaseSnapshot(snapshot_options.snapshot);
+            break;
+        }
+        case FuzzOp::kReopenDb: {
+            db.reset();
+            db = OpenDB(db_deleter.path(), fuzzed_data);
+            if (!db) {
+                fprintf(stderr, "couldn't reopen db\n");
+                assert(db);
+                //return 0;
+            }
+            break;
+        }
+        case FuzzOp::kCompactRange: {
+                                    /*
+            std::string begin_key = fuzzed_data.ConsumeRandomLengthString();
+            std::string end_key =  fuzzed_data.ConsumeRandomLengthString();
 
-      break;
+            auto print_key = [](const char* name, const std::string& key) {
+                fprintf(stderr, "CompactRange %s (size=%zu): '", name, key.length());
+                for (unsigned char c : key) {
+                    fprintf(stderr, "%02x", c);
+                }
+                fprintf(stderr, "'\n");
+            };
+            print_key("begin_key", begin_key);
+            print_key("end_key", end_key);
+
+            leveldb::Slice begin_slice(begin_key);
+            leveldb::Slice end_slice(end_key);
+            db->CompactRange(&begin_slice, &end_slice);
+      */
+            break;
+        }
+        case FuzzOp::kWrite: {
+            leveldb::WriteBatch batch;
+            std::map<std::string, std::optional<std::string>> batch_changes;
+            size_t batch_size = 0;
+    
+            LIMITED_WHILE(fuzzed_data.ConsumeBool(), 100, total_size + batch_size, max_size) {
+
+                //std::string key = fuzzed_data.ConsumeRandomLengthString();
+                std::string key = ConsumeNonEmptyString(fuzzed_data);
+
+                /*
+                auto print_key = [](const char* name, const std::string& key) {
+                    fprintf(stderr, "Write %s (size=%zu): '", name, key.length());
+                    for (unsigned char c : key) {
+                        fprintf(stderr, "%02x", c);
+                    }
+                    fprintf(stderr, "'\n");
+                };
+                print_key("write_key", key);
+                */
+
+        
+                if (fuzzed_data.ConsumeBool()) {
+                    //std::string value = fuzzed_data.ConsumeRandomLengthString();
+                    std::string value = ConsumeNonEmptyString(fuzzed_data);
+                    if (fuzzed_data.ConsumeBool()) {
+                        value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*20));
+                    }
+                    batch.Put(key, value);
+                    batch_changes[key] = value;
+                    batch_size += value.size();  
+                } else {
+                    batch.Delete(key);
+                    batch_changes[key] = std::nullopt;  
+                }
+            }
+    
+            leveldb::WriteOptions write_options;
+            write_options.sync = fuzzed_data.ConsumeBool();
+ 
+            leveldb::Status status = db->Write(write_options, &batch);
+      
+            if (status.ok()) {
+                total_size += batch_size;
+                for (const auto& [key, value] : batch_changes) {
+                    if (!value) {
+                        reference_map.erase(key);
+                    } else {
+                        reference_map[key] = *value;
+                    }
+                }
+            } else {
+                //fprintf(stderr, "problem with writing");
+                fprintf(stderr, "db->Write() with batch failed: %s\n", status.ToString().c_str());
+                assert(false);
+            }
+            break;
+            }
+            }
     }
-    }
-  }
   /*
   if (!VerifyContents(db.get(), reference_map)) {
         auto print_hex = [](const std::string& str) {

@@ -2,7 +2,7 @@
 
 TMP_DIR="/tmp"
 DB_PATTERN="testdb_*"
-KEEP_N=100
+KEEP_N=78
 SLEEP_INTERVAL=1
 
 echo "Keep newest $KEEP_N directories..."
@@ -15,7 +15,7 @@ while true; do
   count=$(find "$TMP_DIR" -maxdepth 1 -type d -name "$DB_PATTERN" 2>/dev/null | wc -l)
 
   if [[ "$count" -gt "$KEEP_N" ]]; then
-    echo "Found $count directories, exceeding limit of $KEEP_N. Cleaning up..."
+    #echo "Found $count directories, exceeding limit of $KEEP_N. Cleaning up..."
 
     # Use find to print modification time (epoch seconds) and path, NUL-separated
     # %T@ is epoch time, %p is path. Using \0 for safety.
