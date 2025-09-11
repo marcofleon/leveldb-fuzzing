@@ -2,11 +2,11 @@
 
 TMP_DIR="/tmp"
 DB_PATTERN="testdb_*"
-KEEP_N=130
+KEEP_N=120
 SLEEP_INTERVAL=1
 PARALLEL_JOBS=8
 
-echo "Starting HYBRID cleanup script."
+echo "Starting cleanup script."
 echo "  Watching: $TMP_DIR, keeping <= $KEEP_N directories."
 echo "  Using $PARALLEL_JOBS parallel jobs for cleanup."
 
@@ -33,7 +33,7 @@ while true; do
   count=$(find "$TMP_DIR" -maxdepth 1 -type d -name "$DB_PATTERN" 2>/dev/null | wc -l)
 
   if [[ "$count" -gt "$KEEP_N" ]]; then
-    echo "Found $count directories (limit $KEEP_N). Starting parallel orphan cleanup..."
+    echo "Found $count directories (limit $KEEP_N). Starting orphan cleanup..."
 
     find "$TMP_DIR" -maxdepth 1 -type d -name "$DB_PATTERN" -print0 | \
         xargs -0 -r -n 1 -P "$PARALLEL_JOBS" bash -c 'check_and_delete_if_orphan "$@"' _

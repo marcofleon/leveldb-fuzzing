@@ -31,6 +31,14 @@ class AutoDbDeleter {
             
             pid_t pid = getpid();
 
+            // Single core fuzzing
+            /*
+            db_path_ = std::string("/tmp/testdb_") + std::to_string(pid);
+            std::filesystem::remove_all(db_path_);
+            */
+
+            // Multi core fuzzing
+            
             std::random_device rd;
             std::mt19937_64 gen(rd());
             std::uniform_int_distribution<uint64_t> dis;
@@ -38,6 +46,7 @@ class AutoDbDeleter {
         
             // Format: /tmp/testdb_PID_RANDOM
             db_path_ = std::string("/tmp/testdb_") + std::to_string(pid) + "_" + random_value;
+            
         }
 
     AutoDbDeleter(const AutoDbDeleter&) = delete;
@@ -171,6 +180,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     std::map<std::string, std::string> reference_map;
     size_t total_size = 0;
+    //constexpr size_t max_size = 40LL * 1024 * 1024 * 1024;
     constexpr size_t max_size = 256 * 1024 * 1024;
 
     LIMITED_WHILE(fuzzed_data.remaining_bytes() != 0, 100, total_size, max_size) {
