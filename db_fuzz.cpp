@@ -1,9 +1,9 @@
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <string>
-#include <random>
 #include <unordered_map>
 #include <map>
 #include <cassert>
@@ -28,25 +28,13 @@ namespace {
 class AutoDbDeleter {
     public:
         AutoDbDeleter() {
-            
-            pid_t pid = getpid();
-
-            // Single core fuzzing
-            /*
-            db_path_ = std::string("/tmp/testdb_") + std::to_string(pid);
+            const char* shm_id = std::getenv("__AFL_SHM_ID");
+            if (shm_id && shm_id[0] != '\0') {
+                db_path_ = std::string("/tmp/testdb_") + shm_id;
+            } else {
+                db_path_ = std::string("/tmp/testdb_") + std::to_string(getpid());
+            }
             std::filesystem::remove_all(db_path_);
-            */
-
-            // Multi core fuzzing
-            
-            std::random_device rd;
-            std::mt19937_64 gen(rd());
-            std::uniform_int_distribution<uint64_t> dis;
-            std::string random_value = std::to_string(dis(gen));
-        
-            // Format: /tmp/testdb_PID_RANDOM
-            db_path_ = std::string("/tmp/testdb_") + std::to_string(pid) + "_" + random_value;
-            
         }
 
     AutoDbDeleter(const AutoDbDeleter&) = delete;
