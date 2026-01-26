@@ -52,7 +52,7 @@ class AutoDbDeleter {
 
 static leveldb::Options GetOptions(FuzzedDataProvider& fuzzed_data) 
 {
-    size_t nCacheSize = fuzzed_data.ConsumeIntegralInRange<size_t>(1024, 1024*1024*32);
+    size_t nCacheSize = fuzzed_data.ConsumeIntegralInRange<size_t>(1024*1024, 1024*1024*32);
     leveldb::Options options;
     options.block_cache = leveldb::NewLRUCache(nCacheSize / 2);
     options.write_buffer_size = nCacheSize / 4; // up to two write buffers may be held in memory simultaneously
@@ -61,7 +61,7 @@ static leveldb::Options GetOptions(FuzzedDataProvider& fuzzed_data)
     if (leveldb::kMajorVersion > 1 || (leveldb::kMajorVersion == 1 && leveldb::kMinorVersion >= 16)) {
         options.paranoid_checks = true;
     }
-    options.max_file_size = fuzzed_data.ConsumeIntegralInRange<size_t>(1024, 1024*1024*32);
+    options.max_file_size = fuzzed_data.ConsumeIntegralInRange<size_t>(1024*1024*32, 1024*1024*128);
     options.create_if_missing = true;
     return options;
 }
@@ -169,7 +169,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     std::map<std::string, std::string> reference_map;
     size_t total_size = 0;
     //constexpr size_t max_size = 40LL * 1024 * 1024 * 1024;
-    constexpr size_t max_size = 256 * 1024 * 1024;
+    constexpr size_t max_size = 3LL * 1024 * 1024 * 1024;
 
     LIMITED_WHILE(fuzzed_data.remaining_bytes() != 0, 100, total_size, max_size) {
         FuzzOp fuzz_op = fuzzed_data.ConsumeEnum<FuzzOp>();
@@ -179,7 +179,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             std::string key = fuzzed_data.ConsumeRandomLengthString();
             std::string value = fuzzed_data.ConsumeRandomLengthString();
             if (fuzzed_data.ConsumeBool()) {
-                value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*20));
+                value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*5));
                 total_size += value.size();
             }
             leveldb::Status status = db->Put(leveldb::WriteOptions(), key, value);
@@ -254,7 +254,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 if (fuzzed_data.ConsumeBool()) {
                     std::string value = fuzzed_data.ConsumeRandomLengthString();
                     if (fuzzed_data.ConsumeBool()) {
-                        value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*20));
+                        value.resize(value.size() + fuzzed_data.ConsumeIntegralInRange<size_t>(0, 1024*1024*5));
                     }
                     batch.Put(key, value);
                     batch_changes[key] = value;
